@@ -137,6 +137,23 @@ class TestHashTask:
         t2 = {"description": "Task B", "complete": False}
         assert compute_hashes.hash_task(t1) != compute_hashes.hash_task(t2)
 
+    def test_new_fields_do_not_affect_hash(self):
+        """Enriched fields (priority, tags, subtaskHtml, acReferences, etc.) must not change hash."""
+        base = {"description": "Do thing", "complete": False}
+        enriched = {
+            "description": "Do thing",
+            "complete": False,
+            "priority": 1,
+            "tags": ["AI-Review"],
+            "subtaskHtml": "<div><ul><li>sub</li></ul></div>",
+            "acReferences": [1, 3],
+            "cleanTitle": "Do thing",
+            "filePath": "src/foo.py:42",
+            "isReviewFollowup": True,
+            "reviewRound": 1,
+        }
+        assert compute_hashes.hash_task(base) == compute_hashes.hash_task(enriched)
+
 
 # --- generate_iteration_slug ---
 

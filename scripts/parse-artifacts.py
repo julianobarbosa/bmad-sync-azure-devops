@@ -12,6 +12,86 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def extract_review_metadata(description: str) -> Dict[str, Any]:
+    """Parse review follow-up description for priority, file path, clean title, and tags.
+
+    Extracts bracket-delimited metadata from review follow-up task descriptions:
+    - Priority: [HIGH], [MEDIUM], [LOW] → maps to 1, 2, 3
+    - File path: [path/file.ext] or [path/file.ext:123] anchored at end
+    - AI-Review tag: [AI-Review]
+    - Clean title: description with all bracket tags and file path stripped
+
+    Returns dict with keys: priority, filePath, cleanTitle, tags.
+    Missing fields are None or empty list.
+    """
+    priority_map = {"high": 1, "medium": 2, "low": 3}
+    priority = None
+    file_path = None
+    tags = []
+
+    # Extract priority
+    pm = re.search(r'\[(HIGH|MEDIUM|LOW)\]', description, re.IGNORECASE)
+    if pm:
+        priority = priority_map[pm.group(1).lower()]
+
+    # Extract file path (anchored to end of string)
+    fm = re.search(r'\[([^\]]+\.\w+(?::\d+)?)\]\s*$', description)
+    if fm:
+        file_path = fm.group(1)
+
+    # Extract AI-Review tag
+    if re.search(r'\[AI-Review\]', description, re.IGNORECASE):
+        tags.append("AI-Review")
+
+    # Build clean title: strip all [...] tags and trailing file path
+    clean = re.sub(r'\[(?:HIGH|MEDIUM|LOW|AI-Review)\]\s*', '', description, flags=re.IGNORECASE)
+    clean = re.sub(r'\[[^\]]+\.\w+(?::\d+)?\]\s*$', '', clean)
+    clean = clean.strip()
+
+    return {
+        "priority": priority,
+        "filePath": file_path,
+        "cleanTitle": clean if clean else description.strip(),
+        "tags": tags
+    }
+
+
+def extract_ac_references(description: str) -> List[int]:
+    """Extract acceptance criteria references from a task description.
+
+    Matches patterns like (AC: 1), (AC: 1, 2, 3), (AC: 1, 3).
+    Returns sorted unique list of ints.
+    """
+    m = re.search(r'\(AC:\s*([\d,\s]+)\)', description)
+    if not m:
+        return []
+    nums = set()
+    for part in m.group(1).split(","):
+        part = part.strip()
+        if part.isdigit():
+            nums.add(int(part))
+    return sorted(nums)
+
+
+def build_subtask_html(subtasks: List[Dict[str, Any]]) -> str:
+    """Build HTML checklist from subtask items.
+
+    Returns raw HTML (not using wrap_html() since that escapes <>).
+    Uses &#9745; for checked and &#9744; for unchecked checkboxes.
+    Returns empty string if no subtasks.
+    """
+    if not subtasks:
+        return ""
+    items = []
+    for st in subtasks:
+        check = "&#9745;" if st.get("complete", False) else "&#9744;"
+        # Escape HTML in description
+        desc = st.get("description", "")
+        desc = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        items.append(f"<li>{check} {desc}</li>")
+    return "<div><ul>" + "".join(items) + "</ul></div>"
+
+
 def detect_heading_levels(content: str) -> Tuple[int, int]:
     """Scan for 'Epic N:' pattern at any heading level and derive story level."""
     for line in content.splitlines():
@@ -293,14 +373,25 @@ def parse_story_file(story_id: str, story_path: str) -> Tuple[List[Dict[str, Any
         rm = re.match(r'^- \[([ xX])\]\s*(.+)$', line)
         if rm:
             item_num += 1
+            desc = rm.group(2).strip()
+            meta = extract_review_metadata(desc)
             review_tasks.append({
                 "id": f"{story_id}-R{current_round}.{item_num}",
-                "description": rm.group(2).strip(),
+                "description": desc,
                 "complete": rm.group(1).lower() == "x",
                 "isReviewFollowup": True,
                 "reviewRound": current_round,
-                "subtasks": []
+                "subtasks": [],
+                "cleanTitle": meta["cleanTitle"],
+                "priority": meta["priority"],
+                "filePath": meta["filePath"],
+                "tags": meta["tags"]
             })
+
+    # --- Enrich regular tasks with AC references and subtask HTML ---
+    for task in tasks:
+        task["acReferences"] = extract_ac_references(task["description"])
+        task["subtaskHtml"] = build_subtask_html(task["subtasks"])
 
     return tasks, status, review_tasks
 
@@ -314,10 +405,10 @@ def story_id_from_filename(filename: str) -> Optional[str]:
     return f"{m.group(1)}.{m.group(2)}" if m else None
 
 
-def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, str], Dict[str, List[Dict[str, Any]]]]:
+def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, str], Dict[str, List[Dict[str, Any]]], Dict[str, str]]:
     """Scan story directories and flat files for task breakdowns, statuses, and review follow-ups.
 
-    3-pass scan returning (all_tasks, story_statuses, review_followups_by_story):
+    3-pass scan returning (all_tasks, story_statuses, review_followups_by_story, story_file_paths):
     1. Known story IDs in nested {N.M}/story.md format (backward compat)
     2. Flat {N-M-slug}.md files — skip IDs already found in pass 1
     3. Unknown nested directories matching ^\\d+\\.\\d+$
@@ -325,9 +416,10 @@ def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, 
     all_tasks = {}
     story_statuses = {}
     review_followups_by_story = {}
+    story_file_paths = {}
 
     if not stories_dir or not os.path.isdir(stories_dir):
-        return all_tasks, story_statuses, review_followups_by_story
+        return all_tasks, story_statuses, review_followups_by_story, story_file_paths
 
     found_ids = set()
 
@@ -342,6 +434,7 @@ def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, 
                 story_statuses[story_id] = status
             if review_tasks:
                 review_followups_by_story[story_id] = review_tasks
+            story_file_paths[story_id] = os.path.abspath(story_path)
             found_ids.add(story_id)
 
     # Pass 2: Flat {N-M-slug}.md files — skip IDs already found
@@ -361,6 +454,7 @@ def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, 
                     story_statuses[sid] = status
                 if review_tasks:
                     review_followups_by_story[sid] = review_tasks
+                story_file_paths[sid] = os.path.abspath(story_path)
                 found_ids.add(sid)
     except OSError:
         pass
@@ -379,11 +473,12 @@ def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, 
                         story_statuses[entry] = status
                     if review_tasks:
                         review_followups_by_story[entry] = review_tasks
+                    story_file_paths[entry] = os.path.abspath(story_path)
                     found_ids.add(entry)
     except OSError:
         pass
 
-    return all_tasks, story_statuses, review_followups_by_story
+    return all_tasks, story_statuses, review_followups_by_story, story_file_paths
 
 
 def parse_epic_statuses(path: str) -> Dict[str, str]:
@@ -427,9 +522,9 @@ def main():
     # Parse epics.md
     epics, stories = parse_epics_file(args.epics)
 
-    # Scan story files for tasks, statuses, and review follow-ups
+    # Scan story files for tasks, statuses, review follow-ups, and file paths
     story_ids = [s["id"] for s in stories]
-    tasks_by_story, story_statuses, review_followups_by_story = scan_story_files(args.stories_dir, story_ids)
+    tasks_by_story, story_statuses, review_followups_by_story, story_file_paths = scan_story_files(args.stories_dir, story_ids)
 
     # Flatten tasks
     all_tasks = []
@@ -453,6 +548,7 @@ def main():
         "tasks": all_tasks,
         "epicStatuses": epic_statuses,
         "storyStatuses": story_statuses,
+        "storyFilePaths": story_file_paths,
         "counts": {
             "epics": len(epics),
             "stories": len(stories),

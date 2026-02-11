@@ -143,6 +143,22 @@ When both formats exist for the same story ID, the nested directory takes priori
 
 AI code review items (from `### Review Follow-ups (AI)` and `### Review Follow-ups Round N (AI)` sections) sync as Task work items parented to their story. Each review item gets a unique ID: `{storyId}-R{round}.{item}` (e.g., `1.1-R1.1`, `1.1-R2.3`).
 
+### Enriched Work Item Fields
+
+Tasks and stories are enriched with additional Azure DevOps fields extracted during parsing. These fields are applied whenever a work item is created or updated, but are **not included in content hashes** (so existing items won't be reclassified on upgrade).
+
+| Source | DevOps Field | Applies To |
+|--------|-------------|------------|
+| `[HIGH]` / `[MEDIUM]` / `[LOW]` severity tag | Priority (1/2/3) | Review follow-up tasks |
+| `[AI-Review]` tag | Tags: `AI-Review` | Review follow-up tasks |
+| `[file/path.ext:line]` in description | Description (file context) | Review follow-up tasks |
+| Bracket-stripped description | Title (cleaner, shorter) | Review follow-up tasks |
+| Subtask checklist | Description (HTML checklist) | Regular tasks with subtasks |
+| `(AC: 1, 3)` pattern | Description (AC references) | Regular tasks |
+| Story `.md` file | Attached file (via REST API) | Stories |
+
+**Story file attachments** require the `--org` argument (or `orgUrl` in config) and the `AZURE_DEVOPS_EXT_PAT` environment variable. The story markdown file is uploaded via the Azure DevOps REST API and linked as an AttachedFile relation to the Story work item.
+
 ### Story Status Sync
 
 The `Status:` field in story files maps to Azure DevOps work item state:
@@ -244,6 +260,8 @@ The workflow uses normalized SHA-256 hashes (first 12 hex chars) to detect chang
 | Task | task description + checkbox state (complete/incomplete) |
 
 > **Note:** Story status is included in the story hash so that status changes (e.g., `in-progress` → `done`) trigger a CHANGED classification and state sync. Epic status from `sprint-status.yaml` is included in the epic hash so that epic status changes trigger iteration creation. Review follow-up tasks use the same hash formula as regular tasks.
+>
+> **Enriched fields** (priority, tags, file path, subtask HTML, AC references, clean title) are **excluded from hashes** to maintain backward compatibility. Adding them would cause every existing item to reclassify as CHANGED on first run after upgrade. Instead, enriched fields are applied whenever sync touches an item (NEW or CHANGED).
 
 Re-running Create mode only pushes items whose hash changed since last sync.
 
@@ -344,7 +362,7 @@ The `scripts/` directory contains four Python scripts that replace error-prone s
 | `detect-template.py` | Nonexistent `az boards work-item type list` CLI command | Uses REST API directly via `urllib.request` |
 | `parse-artifacts.py` | AI-written ad-hoc parser that broke on different heading levels | Auto-detects `##`/`###`/`####` heading levels |
 | `compute-hashes.py` | 100+ individual `sha256sum` / PowerShell shell calls | Single batch operation via `hashlib` |
-| `sync-devops.py` | AI-written batch script with `az.cmd` path issues on Windows | Auto-detects `az` path via `shutil.which` |
+| `sync-devops.py` | AI-written batch script with `az.cmd` path issues on Windows | Auto-detects `az` path via `shutil.which`, enriches tasks with priority/tags/description, attaches story files via REST API |
 
 Each step file references its script via frontmatter (e.g., `parseScript: '../scripts/parse-artifacts.py'`). If Python is unavailable, fallback instructions are provided in each step.
 

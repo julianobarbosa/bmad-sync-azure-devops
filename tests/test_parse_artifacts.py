@@ -1,11 +1,131 @@
 """Tests for parse-artifacts.py."""
 
-import os
 import importlib
+import os
 
 import pytest
 
 parse_artifacts = importlib.import_module("parse-artifacts")
+
+
+# --- extract_review_metadata ---
+
+class TestExtractReviewMetadata:
+    def test_full_metadata(self):
+        desc = "[HIGH] [AI-Review] Fix null check in handler [src/api/handler.py:42]"
+        result = parse_artifacts.extract_review_metadata(desc)
+        assert result["priority"] == 1
+        assert result["filePath"] == "src/api/handler.py:42"
+        assert result["tags"] == ["AI-Review"]
+        assert result["cleanTitle"] == "Fix null check in handler"
+
+    def test_high_priority(self):
+        result = parse_artifacts.extract_review_metadata("[HIGH] Fix bug")
+        assert result["priority"] == 1
+
+    def test_medium_priority(self):
+        result = parse_artifacts.extract_review_metadata("[MEDIUM] Refactor code")
+        assert result["priority"] == 2
+
+    def test_low_priority(self):
+        result = parse_artifacts.extract_review_metadata("[LOW] Add comment")
+        assert result["priority"] == 3
+
+    def test_case_insensitive_priority(self):
+        result = parse_artifacts.extract_review_metadata("[high] Fix bug")
+        assert result["priority"] == 1
+
+    def test_case_insensitive_ai_review(self):
+        result = parse_artifacts.extract_review_metadata("[ai-review] Fix bug")
+        assert result["tags"] == ["AI-Review"]
+
+    def test_missing_priority(self):
+        result = parse_artifacts.extract_review_metadata("Fix bug [src/foo.py]")
+        assert result["priority"] is None
+
+    def test_missing_file_path(self):
+        result = parse_artifacts.extract_review_metadata("[HIGH] Fix null check")
+        assert result["filePath"] is None
+
+    def test_missing_ai_review_tag(self):
+        result = parse_artifacts.extract_review_metadata("[HIGH] Fix bug [src/foo.py]")
+        assert result["tags"] == []
+
+    def test_file_path_without_line_number(self):
+        result = parse_artifacts.extract_review_metadata("Fix bug [src/foo.py]")
+        assert result["filePath"] == "src/foo.py"
+
+    def test_file_path_with_line_number(self):
+        result = parse_artifacts.extract_review_metadata("Fix bug [src/foo.py:123]")
+        assert result["filePath"] == "src/foo.py:123"
+
+    def test_plain_description(self):
+        result = parse_artifacts.extract_review_metadata("Fix error handling")
+        assert result["priority"] is None
+        assert result["filePath"] is None
+        assert result["tags"] == []
+        assert result["cleanTitle"] == "Fix error handling"
+
+    def test_clean_title_strips_all_tags(self):
+        desc = "[MEDIUM] [AI-Review] Improve logging [src/log.py]"
+        result = parse_artifacts.extract_review_metadata(desc)
+        assert result["cleanTitle"] == "Improve logging"
+
+
+# --- extract_ac_references ---
+
+class TestExtractAcReferences:
+    def test_single_ac(self):
+        assert parse_artifacts.extract_ac_references("Do thing (AC: 1)") == [1]
+
+    def test_multiple_acs(self):
+        assert parse_artifacts.extract_ac_references("Do thing (AC: 1, 3, 5)") == [1, 3, 5]
+
+    def test_no_ac(self):
+        assert parse_artifacts.extract_ac_references("Do thing without AC") == []
+
+    def test_spaces_in_ac(self):
+        assert parse_artifacts.extract_ac_references("Do thing (AC:  2 , 4 )") == [2, 4]
+
+    def test_deduplication(self):
+        assert parse_artifacts.extract_ac_references("Do thing (AC: 2, 2, 3)") == [2, 3]
+
+    def test_sorted_output(self):
+        assert parse_artifacts.extract_ac_references("Do thing (AC: 5, 1, 3)") == [1, 3, 5]
+
+
+# --- build_subtask_html ---
+
+class TestBuildSubtaskHtml:
+    def test_basic_rendering(self):
+        subtasks = [
+            {"description": "Subtask A", "complete": True},
+            {"description": "Subtask B", "complete": False},
+        ]
+        result = parse_artifacts.build_subtask_html(subtasks)
+        assert "&#9745; Subtask A" in result
+        assert "&#9744; Subtask B" in result
+        assert result.startswith("<div><ul>")
+        assert result.endswith("</ul></div>")
+
+    def test_empty_list(self):
+        assert parse_artifacts.build_subtask_html([]) == ""
+
+    def test_html_escaping(self):
+        subtasks = [{"description": "Fix <div> & stuff", "complete": False}]
+        result = parse_artifacts.build_subtask_html(subtasks)
+        assert "&lt;div&gt;" in result
+        assert "&amp;" in result
+        assert "<div>" not in result.replace("<div><ul>", "")  # only the wrapper div
+
+    def test_checkbox_characters(self):
+        subtasks = [
+            {"description": "Done", "complete": True},
+            {"description": "Pending", "complete": False},
+        ]
+        result = parse_artifacts.build_subtask_html(subtasks)
+        assert "&#9745;" in result
+        assert "&#9744;" in result
 
 
 # --- detect_heading_levels ---
@@ -198,6 +318,51 @@ class TestParseStoryFile:
         tasks, _, _ = parse_artifacts.parse_story_file("1.1", path)
         assert tasks == []
 
+    def test_review_followups_with_metadata(self, tmp_file):
+        content = (
+            "# Story\n\n"
+            "### Review Follow-ups (AI)\n"
+            "- [ ] [HIGH] [AI-Review] Fix null check [src/handler.py:42]\n"
+            "- [x] [LOW] Add logging\n"
+        )
+        path = tmp_file(content)
+        _, _, review_tasks = parse_artifacts.parse_story_file("1.1", path)
+        assert len(review_tasks) == 2
+        # First review task: full metadata
+        assert review_tasks[0]["priority"] == 1
+        assert review_tasks[0]["filePath"] == "src/handler.py:42"
+        assert review_tasks[0]["tags"] == ["AI-Review"]
+        assert review_tasks[0]["cleanTitle"] == "Fix null check"
+        # Second review task: partial metadata
+        assert review_tasks[1]["priority"] == 3
+        assert review_tasks[1]["filePath"] is None
+        assert review_tasks[1]["tags"] == []
+
+    def test_tasks_with_ac_references(self, tmp_file):
+        content = (
+            "## Tasks / Subtasks\n"
+            "- [ ] Set up auth (AC: 1, 3)\n"
+            "- [ ] No AC here\n"
+        )
+        path = tmp_file(content)
+        tasks, _, _ = parse_artifacts.parse_story_file("1.1", path)
+        assert tasks[0]["acReferences"] == [1, 3]
+        assert tasks[1]["acReferences"] == []
+
+    def test_tasks_with_subtask_html(self, tmp_file):
+        content = (
+            "## Tasks / Subtasks\n"
+            "- [ ] Main task\n"
+            "  - [x] Sub A\n"
+            "  - [ ] Sub B\n"
+            "- [ ] No subtasks\n"
+        )
+        path = tmp_file(content)
+        tasks, _, _ = parse_artifacts.parse_story_file("1.1", path)
+        assert "&#9745; Sub A" in tasks[0]["subtaskHtml"]
+        assert "&#9744; Sub B" in tasks[0]["subtaskHtml"]
+        assert tasks[1]["subtaskHtml"] == ""
+
 
 # --- story_id_from_filename ---
 
@@ -225,9 +390,11 @@ class TestScanStoryFiles:
             "**Status:** done\n## Tasks / Subtasks\n- [x] Task one\n",
             encoding="utf-8"
         )
-        tasks, statuses, _ = parse_artifacts.scan_story_files(str(tmp_path), [])
+        tasks, statuses, _, file_paths = parse_artifacts.scan_story_files(str(tmp_path), [])
         assert "1.1" in tasks
         assert statuses["1.1"] == "done"
+        assert "1.1" in file_paths
+        assert file_paths["1.1"].endswith("1-1-test-story.md")
 
     def test_nested_directory_discovery(self, tmp_path):
         story_dir = tmp_path / "2.1"
@@ -237,15 +404,18 @@ class TestScanStoryFiles:
             "**Status:** in-progress\n## Tasks / Subtasks\n- [ ] Task\n",
             encoding="utf-8"
         )
-        tasks, statuses, _ = parse_artifacts.scan_story_files(str(tmp_path), ["2.1"])
+        tasks, statuses, _, file_paths = parse_artifacts.scan_story_files(str(tmp_path), ["2.1"])
         assert "2.1" in tasks
         assert statuses["2.1"] == "in-progress"
+        assert "2.1" in file_paths
+        assert file_paths["2.1"].endswith("story.md")
 
     def test_nonexistent_dir(self):
-        tasks, statuses, reviews = parse_artifacts.scan_story_files("/nonexistent", [])
+        tasks, statuses, reviews, file_paths = parse_artifacts.scan_story_files("/nonexistent", [])
         assert tasks == {}
         assert statuses == {}
         assert reviews == {}
+        assert file_paths == {}
 
 
 # --- parse_epic_statuses ---

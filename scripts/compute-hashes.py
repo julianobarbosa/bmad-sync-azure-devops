@@ -321,6 +321,13 @@ def main():
             if status not in ("draft", ""):
                 new_story_state_updates += 1
 
+    # Count story attachment calls (upload + relation add = 2 per story with file)
+    story_file_paths = parsed.get("storyFilePaths", {})
+    attachment_calls = 0
+    for s in story_results:
+        if s["classification"] in ("NEW", "CHANGED") and story_file_paths.get(s.get("id", "")):
+            attachment_calls += 2  # REST upload + az relation add
+
     cli_calls = (
         epic_counts["NEW"] + epic_counts["CHANGED"]  # epic create/update
         + story_counts["NEW"] * 2  # story create + parent link
@@ -328,6 +335,7 @@ def main():
         + story_counts["CHANGED"]  # story update (includes state in same call)
         + task_counts["NEW"] * 2  # task create + parent link
         + task_counts["CHANGED"]  # task update
+        + attachment_calls  # story file attachments (REST + CLI)
     )
     # Add iteration calls: creation + item movement (epic + stories + tasks)
     for it in iteration_results:
@@ -349,6 +357,7 @@ def main():
         "iterations": iteration_results,
         "epicStatuses": epic_statuses,
         "storyStatuses": story_statuses,
+        "storyFilePaths": story_file_paths,
         "summary": {
             "epics": epic_counts,
             "stories": story_counts,

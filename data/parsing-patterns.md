@@ -302,3 +302,75 @@ $hash
   ]
 }
 ```
+
+---
+
+## Review Follow-up Metadata Extraction
+
+Review follow-up task descriptions may contain bracket-delimited metadata that is extracted into enriched fields for Azure DevOps sync.
+
+### Priority Tag
+
+```regex
+\[(HIGH|MEDIUM|LOW)\]
+```
+
+Case-insensitive. Maps to Azure DevOps `Microsoft.VSTS.Common.Priority`:
+- `[HIGH]` → 1
+- `[MEDIUM]` → 2
+- `[LOW]` → 3
+
+### File Path Tag
+
+```regex
+\[([^\]]+\.\w+(?::\d+)?)\]\s*$
+```
+
+Anchored to end of description string. Captures file path with optional line number.
+
+Examples: `[src/api/handler.py]`, `[src/api/handler.py:42]`
+
+### AI-Review Tag
+
+```regex
+\[AI-Review\]
+```
+
+Case-insensitive. When present, adds `AI-Review` to `System.Tags` field.
+
+### Clean Title
+
+The description with all bracket tags stripped, used as the work item title instead of the full tag-laden description.
+
+---
+
+## AC Reference Extraction
+
+Task descriptions may reference acceptance criteria from the parent story.
+
+```regex
+\(AC:\s*([\d,\s]+)\)
+```
+
+Examples:
+- `(AC: 1)` → `[1]`
+- `(AC: 1, 3, 5)` → `[1, 3, 5]`
+- `(AC: 2, 2)` → `[2]` (deduplicated)
+
+Returns sorted unique list of integer references, included in the task description HTML in Azure DevOps.
+
+---
+
+## Enriched Field Mapping
+
+These fields are extracted during parsing and applied during sync but are **NOT included in content hashes** (to preserve backward compatibility — adding them to hashes would reclassify all existing items as CHANGED on first run).
+
+| Source | Extracted Field | DevOps Target Field | Applies To |
+|--------|----------------|---------------------|------------|
+| `[HIGH\|MEDIUM\|LOW]` tag | `priority` | `Microsoft.VSTS.Common.Priority` | Review follow-up tasks |
+| Subtask list | `subtaskHtml` | `System.Description` | Regular tasks with subtasks |
+| File path tag | `filePath` | `System.Description` | Review follow-up tasks |
+| `[AI-Review]` tag | `tags` | `System.Tags` | Review follow-up tasks |
+| `(AC: N)` pattern | `acReferences` | `System.Description` | Regular tasks |
+| Bracket-stripped text | `cleanTitle` | `System.Title` | Review follow-up tasks |
+| Story .md file | attachment | AttachedFile relation | Stories (via REST API) |

@@ -6,11 +6,14 @@ Creates/updates work items in dependency order (Epics -> Stories -> Tasks -> Ite
 """
 
 import argparse
+import base64
 import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -158,6 +161,160 @@ def wrap_html(text: Optional[str], max_len: int = 0) -> str:
     return f"<div>{escaped}</div>"
 
 
+def build_task_description(task: Dict[str, Any]) -> str:
+    """Build HTML description for a task work item.
+
+    For review follow-up tasks: includes file path context.
+    For regular tasks: includes subtask checklist and AC references.
+    Returns empty string if no enrichment available.
+    """
+    if task.get("isReviewFollowup"):
+        parts = []
+        file_path = task.get("filePath")
+        if file_path:
+            escaped = file_path.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            parts.append(f"<b>File:</b> <code>{escaped}</code>")
+        if parts:
+            return "<div>" + "<br>".join(parts) + "</div>"
+        return ""
+
+    # Regular task
+    parts = []
+    ac_refs = task.get("acReferences", [])
+    if ac_refs:
+        ac_str = ", ".join(str(n) for n in ac_refs)
+        parts.append(f"<b>Acceptance Criteria:</b> {ac_str}")
+    subtask_html = task.get("subtaskHtml", "")
+    if subtask_html:
+        parts.append(subtask_html)
+    if parts:
+        return "<div>" + "<br>".join(parts) + "</div>"
+    return ""
+
+
+def build_task_create_args(task: Dict[str, Any], area: str, iteration: str) -> List[str]:
+    """Build az CLI args for creating a task work item with enriched fields."""
+    # Use cleanTitle for review tasks, description for regular tasks
+    if task.get("isReviewFollowup") and task.get("cleanTitle"):
+        title = task["cleanTitle"]
+    else:
+        title = task.get("description", "")
+
+    args = [
+        "boards", "work-item", "create",
+        "--type", "Task",
+        "--title", truncate_title(title),
+    ]
+    if area:
+        args += ["--area", area]
+    if iteration:
+        args += ["--iteration", iteration]
+
+    # Description
+    desc_html = build_task_description(task)
+    if desc_html:
+        args += ["--description", desc_html]
+
+    # Fields (priority, tags)
+    fields = []
+    priority = task.get("priority")
+    if priority is not None:
+        fields.append(f"Microsoft.VSTS.Common.Priority={priority}")
+    tags = task.get("tags", [])
+    if tags:
+        fields.append(f"System.Tags={';'.join(tags)}")
+    for field in fields:
+        args += ["--fields", field]
+
+    return args
+
+
+def build_task_update_args(task: Dict[str, Any], devops_id: int, complete_state: str) -> List[str]:
+    """Build az CLI args for updating a task work item with enriched fields."""
+    state = complete_state if task.get("complete", False) else "New"
+
+    # Use cleanTitle for review tasks, description for regular tasks
+    if task.get("isReviewFollowup") and task.get("cleanTitle"):
+        title = task["cleanTitle"]
+    else:
+        title = task.get("description", "")
+
+    args = [
+        "boards", "work-item", "update",
+        "--id", str(devops_id),
+        "--title", truncate_title(title),
+        "--state", state,
+    ]
+
+    # Description
+    desc_html = build_task_description(task)
+    if desc_html:
+        args += ["--description", desc_html]
+
+    # Fields (priority, tags)
+    fields = []
+    priority = task.get("priority")
+    if priority is not None:
+        fields.append(f"Microsoft.VSTS.Common.Priority={priority}")
+    tags = task.get("tags", [])
+    if tags:
+        fields.append(f"System.Tags={';'.join(tags)}")
+    for field in fields:
+        args += ["--fields", field]
+
+    return args
+
+
+def upload_attachment(org_url: str, project: str, pat: str, file_path: str, filename: str) -> Optional[str]:
+    """Upload a file attachment to Azure DevOps via REST API.
+
+    Uses urllib.request (stdlib) with PAT authentication.
+    Returns the attachment URL on success, None on failure.
+    """
+    org_url = org_url.rstrip("/")
+    encoded_project = urllib.request.quote(project, safe="")
+    encoded_filename = urllib.request.quote(filename, safe="")
+    url = f"{org_url}/{encoded_project}/_apis/wit/attachments?fileName={encoded_filename}&api-version=7.0"
+
+    try:
+        with open(file_path, "rb") as f:
+            body = f.read()
+    except OSError as e:
+        progress(f"  WARNING: Could not read file for attachment: {e}")
+        return None
+
+    token = base64.b64encode(f":{pat}".encode("utf-8")).decode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Authorization", f"Basic {token}")
+    req.add_header("Content-Type", "application/octet-stream")
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("url")
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        progress(f"  WARNING: Attachment upload failed: {e}")
+        return None
+    except Exception as e:
+        progress(f"  WARNING: Attachment upload error: {e}")
+        return None
+
+
+def attach_file_to_work_item(az_path: str, devops_id: int, attachment_url: str) -> Optional[str]:
+    """Add an AttachedFile relation to a work item using az CLI.
+
+    Returns error string on failure, None on success.
+    """
+    args = [
+        "boards", "work-item", "relation", "add",
+        "--id", str(devops_id),
+        "--relation-type", "AttachedFile",
+        "--target-url", attachment_url,
+    ]
+    _, err = run_az(az_path, args)
+    return err
+
+
 def progress(msg: str) -> None:
     """Print progress message to stderr so stdout stays clean for JSON."""
     print(msg, file=sys.stderr, flush=True)
@@ -260,8 +417,8 @@ def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]
     return results, id_map
 
 
-def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, Any]], epic_id_map: Dict[str, int], story_statuses: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, Any], Dict[str, int]]:
-    """Create/update stories with parent links to epics and state sync."""
+def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, Any]], epic_id_map: Dict[str, int], story_statuses: Optional[Dict[str, str]] = None, story_file_paths: Optional[Dict[str, str]] = None, org_url: str = "", pat: str = "") -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Create/update stories with parent links to epics, state sync, and file attachments."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
 
@@ -271,6 +428,23 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
     story_type = get_story_type(template)
     ac_field = get_ac_field(template)
     story_statuses = story_statuses or {}
+    story_file_paths = story_file_paths or {}
+    project = config.get("projectName", "")
+
+    def _attach_story_file(story_id, devops_id):
+        """Attach story .md file to a work item if org/PAT/path available."""
+        file_path = story_file_paths.get(story_id)
+        if not file_path or not org_url or not pat:
+            return
+        filename = os.path.basename(file_path)
+        progress(f"  Uploading attachment: {filename}")
+        att_url = upload_attachment(org_url, project, pat, file_path, filename)
+        if att_url:
+            att_err = attach_file_to_work_item(az_path, devops_id, att_url)
+            if att_err:
+                progress(f"  WARNING: Attach relation failed: {att_err}")
+            else:
+                progress(f"  Attached {filename} to Story #{devops_id}")
 
     for story in stories:
         cls = story.get("classification", "")
@@ -345,6 +519,9 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
                 else:
                     progress(f"  Set state to '{devops_state}'")
 
+            # Attach story .md file
+            _attach_story_file(story_id, devops_id)
+
             results["created"].append({
                 "id": story_id, "devopsId": devops_id,
                 "epicDevopsId": epic_devops_id,
@@ -383,6 +560,8 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
                 progress(f"  FAILED: {err}")
                 results["failed"].append({"id": story_id, "devopsId": devops_id, "error": err})
             else:
+                # Attach updated story .md file
+                _attach_story_file(story_id, devops_id)
                 results["updated"].append({
                     "id": story_id, "devopsId": devops_id,
                     "contentHash": story.get("contentHash", "")
@@ -413,15 +592,7 @@ def sync_tasks(az_path: str, config: Dict[str, str], tasks: List[Dict[str, Any]]
             continue
 
         if cls == "NEW":
-            args = [
-                "boards", "work-item", "create",
-                "--type", "Task",
-                "--title", truncate_title(task.get("description", "")),
-            ]
-            if area:
-                args += ["--area", area]
-            if iteration:
-                args += ["--iteration", iteration]
+            args = build_task_create_args(task, area, iteration)
 
             progress(f"Creating Task {task_id}: {task.get('description', '')[:60]}")
             data, err = run_az(az_path, args)
@@ -477,12 +648,7 @@ def sync_tasks(az_path: str, config: Dict[str, str], tasks: List[Dict[str, Any]]
                 continue
 
             id_map[task_id] = devops_id
-            state = complete_state if task.get("complete", False) else "New"
-            args = [
-                "boards", "work-item", "update",
-                "--id", str(devops_id),
-                "--state", state,
-            ]
+            args = build_task_update_args(task, devops_id, complete_state)
 
             progress(f"Updating Task {task_id} (#{devops_id})")
             data, err = run_az(az_path, args)
@@ -602,6 +768,7 @@ def main():
     parser.add_argument("--diff", required=True, help="Path to diff results JSON (from compute-hashes.py)")
     parser.add_argument("--config", required=True, help="Path to devops-sync-config.yaml")
     parser.add_argument("--output", required=True, help="Path to write sync results JSON")
+    parser.add_argument("--org", default="", help="Azure DevOps org URL (for story file attachments via REST API)")
     args = parser.parse_args()
 
     # Find az CLI
@@ -631,9 +798,15 @@ def main():
 
     progress("\n=== Syncing Stories ===")
     story_statuses = diff.get("storyStatuses", {})
+    story_file_paths = diff.get("storyFilePaths", {})
+    org_url = args.org or config.get("orgUrl", "")
+    pat = os.environ.get("AZURE_DEVOPS_EXT_PAT", "")
     story_results, story_id_map = sync_stories(
         az_path, config, diff.get("stories", []), epic_id_map,
-        story_statuses=story_statuses
+        story_statuses=story_statuses,
+        story_file_paths=story_file_paths,
+        org_url=org_url,
+        pat=pat
     )
 
     progress("\n=== Syncing Tasks ===")
