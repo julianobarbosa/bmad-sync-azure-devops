@@ -148,12 +148,31 @@ def progress(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
+def get_default_iteration(config):
+    """Build the default iteration path for new work items.
+
+    Constructs '{projectName}\\{iterationRootPath}' from config values.
+    Returns empty string if iterationRootPath is not set.
+    """
+    iteration_root = config.get("iterationRootPath", "")
+    if not iteration_root:
+        return ""
+    project = config.get("projectName", "")
+    # If iterationRootPath already starts with the project name, use as-is
+    if project and iteration_root.startswith(project + "\\"):
+        return iteration_root
+    if project:
+        return f"{project}\\{iteration_root}"
+    return iteration_root
+
+
 def sync_epics(az_path, config, epics):
     """Create/update epics. Returns dict mapping epic ID -> devops ID."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
 
     area = config.get("areaPath", "")
+    iteration = get_default_iteration(config)
 
     for epic in epics:
         cls = epic.get("classification", "")
@@ -174,6 +193,8 @@ def sync_epics(az_path, config, epics):
             ]
             if area:
                 args += ["--area", area]
+            if iteration:
+                args += ["--iteration", iteration]
 
             progress(f"Creating Epic {epic_id}: {epic.get('title', '')}")
             data, err = run_az(az_path, args)
@@ -230,6 +251,7 @@ def sync_stories(az_path, config, stories, epic_id_map, story_statuses=None):
     id_map = {}
 
     area = config.get("areaPath", "")
+    iteration = get_default_iteration(config)
     template = config.get("processTemplate", "Agile")
     story_type = get_story_type(template)
     ac_field = get_ac_field(template)
@@ -254,6 +276,8 @@ def sync_stories(az_path, config, stories, epic_id_map, story_statuses=None):
             ]
             if area:
                 args += ["--area", area]
+            if iteration:
+                args += ["--iteration", iteration]
 
             # Add acceptance criteria
             ac_text = story.get("acceptanceCriteria", "")
@@ -358,6 +382,7 @@ def sync_tasks(az_path, config, tasks, story_id_map):
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
 
     area = config.get("areaPath", "")
+    iteration = get_default_iteration(config)
     template = config.get("processTemplate", "Agile")
     complete_state = get_complete_state(template)
 
@@ -377,6 +402,8 @@ def sync_tasks(az_path, config, tasks, story_id_map):
             ]
             if area:
                 args += ["--area", area]
+            if iteration:
+                args += ["--iteration", iteration]
 
             progress(f"Creating Task {task_id}: {task.get('description', '')[:60]}")
             data, err = run_az(az_path, args)
