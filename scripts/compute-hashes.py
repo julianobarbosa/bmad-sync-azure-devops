@@ -11,9 +11,10 @@ import json
 import os
 import re
 import sys
+from typing import Any, Callable, Dict, List, Optional
 
 
-def normalize(text):
+def normalize(text: Optional[str]) -> str:
     """Normalize text: trim, collapse whitespace, lowercase."""
     if not text:
         return ""
@@ -23,20 +24,20 @@ def normalize(text):
     return text
 
 
-def normalize_list(items):
+def normalize_list(items: Optional[List]) -> str:
     """Sort list items and join with comma."""
     if not items:
         return ""
     return ",".join(sorted(str(i).strip().lower() for i in items if str(i).strip()))
 
 
-def compute_hash(content_string):
+def compute_hash(content_string: str) -> str:
     """SHA-256 hash, first 12 hex chars."""
     h = hashlib.sha256(content_string.encode("utf-8")).hexdigest()
     return h[:12]
 
 
-def hash_epic(epic, epic_statuses=None):
+def hash_epic(epic: Dict[str, Any], epic_statuses: Optional[Dict[str, str]] = None) -> str:
     """Compute content hash for an epic.
 
     Includes normalized epic status in hash so status changes trigger CHANGED classification.
@@ -54,7 +55,7 @@ def hash_epic(epic, epic_statuses=None):
     return compute_hash("|".join(parts))
 
 
-def hash_story(story, story_statuses=None):
+def hash_story(story: Dict[str, Any], story_statuses: Optional[Dict[str, str]] = None) -> str:
     """Compute content hash for a story.
 
     Includes normalized status in hash so status changes trigger CHANGED classification.
@@ -71,7 +72,7 @@ def hash_story(story, story_statuses=None):
     return compute_hash("|".join(parts))
 
 
-def hash_task(task):
+def hash_task(task: Dict[str, Any]) -> str:
     """Compute content hash for a task."""
     state = "complete" if task.get("complete", False) else "incomplete"
     parts = [
@@ -81,14 +82,14 @@ def hash_task(task):
     return compute_hash("|".join(parts))
 
 
-def generate_iteration_slug(epic_id, title):
+def generate_iteration_slug(epic_id: str, title: str) -> str:
     """Generate a kebab-case iteration slug from epic ID and title."""
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
     full = f"epic-{epic_id}-{slug}"
     return full[:128].rstrip('-') if len(full) > 128 else full
 
 
-def load_sync_state(path):
+def load_sync_state(path: Optional[str]) -> Dict[str, Dict]:
     """Load existing sync YAML state. Returns dict with epics/stories/tasks/iterations."""
     empty = {"epics": {}, "stories": {}, "tasks": {}, "iterations": {}}
 
@@ -162,7 +163,7 @@ def load_sync_state(path):
     return result
 
 
-def classify_items(parsed_items, stored_items, hash_fn, id_field="id"):
+def classify_items(parsed_items: List[Dict], stored_items: Dict, hash_fn: Callable, id_field: str = "id") -> List[Dict]:
     """Classify items as NEW/CHANGED/UNCHANGED/ORPHANED."""
     results = []
 

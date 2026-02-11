@@ -1,5 +1,9 @@
 # BMAD Sync Azure DevOps
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.6+](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://github.com/cfpeterkozak/bmad-sync-azure-devops/actions/workflows/ci.yml/badge.svg)](https://github.com/cfpeterkozak/bmad-sync-azure-devops/actions/workflows/ci.yml)
+
 A [BMAD Method](https://github.com/bmadcode/BMAD-METHOD) workflow that syncs your local planning artifacts to Azure DevOps as live work items. Keeps your markdown-based epics, stories, and tasks in sync with an Azure DevOps board — with incremental updates, content-hash change detection, drift auditing, and bug discovery.
 
 ## What is this?
@@ -174,7 +178,7 @@ Connection configuration. Created on first run, reused on subsequent runs.
 organizationUrl: "https://dev.azure.com/myorg"
 projectName: "MyProject"
 areaPath: "MyProject\\Backend"
-iterationRootPath: "MyProject\\Sprints"
+iterationRootPath: "MyProject\\Iterations"
 processTemplate: "Scrum"
 ```
 

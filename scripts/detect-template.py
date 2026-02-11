@@ -12,9 +12,10 @@ import os
 import sys
 import urllib.request
 import urllib.error
+from typing import Any, Dict, List
 
 
-def get_pat():
+def get_pat() -> str:
     pat = os.environ.get("AZURE_DEVOPS_EXT_PAT", "")
     if not pat:
         print(json.dumps({"error": "AZURE_DEVOPS_EXT_PAT environment variable not set"}))
@@ -22,12 +23,12 @@ def get_pat():
     return pat
 
 
-def build_auth_header(pat):
+def build_auth_header(pat: str) -> str:
     token = base64.b64encode(f":{pat}".encode("utf-8")).decode("utf-8")
     return f"Basic {token}"
 
 
-def fetch_work_item_types(org_url, project, pat):
+def fetch_work_item_types(org_url: str, project: str, pat: str) -> Dict[str, Any]:
     org_url = org_url.rstrip("/")
     url = f"{org_url}/{urllib.request.quote(project)}/_apis/wit/workitemtypes?api-version=7.0"
 
@@ -55,7 +56,7 @@ def fetch_work_item_types(org_url, project, pat):
         sys.exit(1)
 
 
-def detect_template(type_names):
+def detect_template(type_names: List[str]) -> str:
     names = set(type_names)
     if "User Story" in names:
         return "Agile"

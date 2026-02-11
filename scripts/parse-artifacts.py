@@ -9,9 +9,10 @@ import json
 import os
 import re
 import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 
-def detect_heading_levels(content):
+def detect_heading_levels(content: str) -> Tuple[int, int]:
     """Scan for 'Epic N:' pattern at any heading level and derive story level."""
     for line in content.splitlines():
         m = re.match(r'^(#{1,6})\s+Epic\s+\d+:', line)
@@ -22,7 +23,7 @@ def detect_heading_levels(content):
     return 2, 3
 
 
-def parse_epics_file(path):
+def parse_epics_file(path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Parse epics.md, auto-detecting heading levels."""
     if not os.path.isfile(path):
         print(json.dumps({"error": f"File not found: {path}"}), file=sys.stderr)
@@ -196,7 +197,7 @@ def parse_epics_file(path):
     return epics, stories
 
 
-def parse_story_file(story_id, story_path):
+def parse_story_file(story_id: str, story_path: str) -> Tuple[List[Dict[str, Any]], Optional[str], List[Dict[str, Any]]]:
     """Parse a single story file for task/subtask breakdowns, status, and review follow-ups.
 
     Returns (tasks, status, review_tasks) where:
@@ -304,7 +305,7 @@ def parse_story_file(story_id, story_path):
     return tasks, status, review_tasks
 
 
-def story_id_from_filename(filename):
+def story_id_from_filename(filename: str) -> Optional[str]:
     """Extract story ID from flat kebab-case filename.
 
     Example: '1-1-initialize-solution-scaffold.md' -> '1.1'
@@ -313,7 +314,7 @@ def story_id_from_filename(filename):
     return f"{m.group(1)}.{m.group(2)}" if m else None
 
 
-def scan_story_files(stories_dir, story_ids):
+def scan_story_files(stories_dir: str, story_ids: List[str]) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, str], Dict[str, List[Dict[str, Any]]]]:
     """Scan story directories and flat files for task breakdowns, statuses, and review follow-ups.
 
     3-pass scan returning (all_tasks, story_statuses, review_followups_by_story):
@@ -385,7 +386,7 @@ def scan_story_files(stories_dir, story_ids):
     return all_tasks, story_statuses, review_followups_by_story
 
 
-def parse_epic_statuses(path):
+def parse_epic_statuses(path: str) -> Dict[str, str]:
     """Parse sprint-status.yaml for epic development statuses.
 
     Returns dict: epic ID -> status (e.g., {"1": "in-progress", "2": "backlog"}).

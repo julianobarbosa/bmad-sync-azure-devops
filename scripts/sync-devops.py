@@ -11,9 +11,10 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 
-def find_az_executable():
+def find_az_executable() -> str:
     """Find the az CLI executable, handling Windows .cmd extension."""
     az = shutil.which("az")
     if az:
@@ -26,7 +27,7 @@ def find_az_executable():
     return "az"
 
 
-def run_az(az_path, args, timeout=120):
+def run_az(az_path: str, args: List[str], timeout: int = 120) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Run an az CLI command and return parsed JSON or error."""
     cmd = [az_path] + args + ["--output", "json"]
 
@@ -76,7 +77,7 @@ def run_az(az_path, args, timeout=120):
         return None, str(e)
 
 
-def get_story_type(template):
+def get_story_type(template: str) -> str:
     """Map process template to story work item type."""
     mapping = {
         "Agile": "User Story",
@@ -87,14 +88,14 @@ def get_story_type(template):
     return mapping.get(template, "User Story")
 
 
-def get_ac_field(template):
+def get_ac_field(template: str) -> Optional[str]:
     """Map process template to acceptance criteria field name."""
     if template == "Basic":
         return None  # Basic uses description
     return "Microsoft.VSTS.Common.AcceptanceCriteria"
 
 
-def get_complete_state(template):
+def get_complete_state(template: str) -> str:
     """Map process template to complete state name."""
     mapping = {
         "Agile": "Closed",
@@ -105,7 +106,7 @@ def get_complete_state(template):
     return mapping.get(template, "Done")
 
 
-def map_bmad_status_to_devops_state(status, template):
+def map_bmad_status_to_devops_state(status: Optional[str], template: str) -> Optional[str]:
     """Map BMAD story status to Azure DevOps work item state.
 
     | BMAD Status  | Agile  | Scrum     | CMMI     | Basic |
@@ -134,7 +135,7 @@ def map_bmad_status_to_devops_state(status, template):
     return status_map.get(template)
 
 
-def wrap_html(text):
+def wrap_html(text: Optional[str]) -> str:
     """Wrap plain text in a div for Azure DevOps HTML fields."""
     if not text:
         return ""
@@ -143,12 +144,12 @@ def wrap_html(text):
     return f"<div>{escaped}</div>"
 
 
-def progress(msg):
+def progress(msg: str) -> None:
     """Print progress message to stderr so stdout stays clean for JSON."""
     print(msg, file=sys.stderr, flush=True)
 
 
-def get_default_iteration(config):
+def get_default_iteration(config: Dict[str, str]) -> str:
     """Build the default iteration path for new work items.
 
     Constructs '{projectName}\\{iterationRootPath}' from config values.
@@ -166,7 +167,7 @@ def get_default_iteration(config):
     return iteration_root
 
 
-def sync_epics(az_path, config, epics):
+def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Create/update epics. Returns dict mapping epic ID -> devops ID."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
@@ -245,7 +246,7 @@ def sync_epics(az_path, config, epics):
     return results, id_map
 
 
-def sync_stories(az_path, config, stories, epic_id_map, story_statuses=None):
+def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, Any]], epic_id_map: Dict[str, int], story_statuses: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Create/update stories with parent links to epics and state sync."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
@@ -377,7 +378,7 @@ def sync_stories(az_path, config, stories, epic_id_map, story_statuses=None):
     return results, id_map
 
 
-def sync_tasks(az_path, config, tasks, story_id_map):
+def sync_tasks(az_path: str, config: Dict[str, str], tasks: List[Dict[str, Any]], story_id_map: Dict[str, int]) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Create/update tasks with parent links to stories. Returns (results, id_map)."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
@@ -485,7 +486,7 @@ def sync_tasks(az_path, config, tasks, story_id_map):
     return results, id_map
 
 
-def sync_epic_iterations(az_path, config, iterations, epic_id_map, story_id_map, task_id_map):
+def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[Dict[str, Any]], epic_id_map: Dict[str, int], story_id_map: Dict[str, int], task_id_map: Dict[str, int]) -> Dict[str, Any]:
     """Create epic-based iterations and move epics, stories, and tasks into them."""
     results = {"created": [], "failed": [], "skipped": [], "movements": []}
 
