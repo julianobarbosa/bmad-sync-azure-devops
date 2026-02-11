@@ -118,6 +118,16 @@ def parse_epics_file(path):
             "dependencies": dependencies
         })
 
+    # Deduplicate epics by ID — some epics.md files have both a summary section
+    # and a detailed section with the same Epic headings. Keep first occurrence.
+    seen_epic_ids = set()
+    unique_epics = []
+    for epic in epics:
+        if epic["id"] not in seen_epic_ids:
+            seen_epic_ids.add(epic["id"])
+            unique_epics.append(epic)
+    epics = unique_epics
+
     # Parse stories with their content
     for idx, (line_num, story_id, story_title) in enumerate(story_positions):
         # Determine parent epic

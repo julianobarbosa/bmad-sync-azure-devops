@@ -31,13 +31,31 @@ def run_az(az_path, args, timeout=120):
     cmd = [az_path] + args + ["--output", "json"]
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            shell=(sys.platform == "win32")  # shell=True on Windows for .cmd files
-        )
+        if sys.platform == "win32":
+            # On Windows, az.cmd requires shell execution. Python's list2cmdline
+            # doesn't quote args that lack spaces, but HTML descriptions like
+            # <div>text</div> contain <> which cmd.exe interprets as redirects.
+            # Build a command string where every arg is individually double-quoted.
+            quoted = []
+            for a in cmd:
+                # Escape any internal double-quotes for cmd.exe (use "")
+                a_escaped = a.replace('"', '""')
+                quoted.append(f'"{a_escaped}"')
+            cmd_str = " ".join(quoted)
+            result = subprocess.run(
+                cmd_str,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                shell=True
+            )
+        else:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
 
         if result.returncode != 0:
             error_msg = result.stderr.strip() or result.stdout.strip() or f"Exit code {result.returncode}"
