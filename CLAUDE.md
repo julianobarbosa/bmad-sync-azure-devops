@@ -4,7 +4,7 @@ Project context for AI coding agents working on this repository.
 
 ## Project Overview
 
-This is a BMAD Method workflow that syncs markdown planning artifacts to Azure DevOps work items. It consists of 4 Python scripts (stdlib-only, no external dependencies) and step-based workflow markdown files.
+This is a BMAD Method workflow that syncs markdown planning artifacts to Azure DevOps work items. It consists of 5 Python scripts (stdlib-only, no external dependencies) and step-based workflow markdown files.
 
 ## Architecture
 
@@ -59,3 +59,5 @@ Tests cover pure functions only (parsing, hashing, normalization, slug generatio
 - **Heading level detection**: `epics.md` uses `##`, `###`, or `####` for epics depending on the project. The parser auto-detects.
 - **Sync state YAML parser**: Hand-rolled (no PyYAML dependency). Expects exactly 2-space indent for IDs, 4-space for properties.
 - **Epic iteration slugs**: Once created, slugs are reused from sync state to prevent renames if the epic title changes.
+- **Attachment auth**: `az boards work-item relation add` does NOT support `AttachedFile` relations. Both upload and link must use REST API (`urllib.request`). Auth is PAT (Basic) or `az account get-access-token` (Bearer) — detect by checking if token starts with `eyJ`.
+- **Attachment backfill**: Stories without `attached: true` in sync state get their `.md` file uploaded even if UNCHANGED. The `attachStoryFiles` config key must be `"true"` (opt-in, default `"false"`).

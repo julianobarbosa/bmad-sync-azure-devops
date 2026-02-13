@@ -67,6 +67,7 @@ CURRENT CONFIGURATION
 [3] Area Path:           {areaPath}
 [4] Iteration Root Path: {iterationRootPath}
 [5] Process Template:    {processTemplate} (auto-detected)
+[6] Attach Story Files:  {attachStoryFiles} (true/false)
 ```
 
 ### 3. Prompt for Changes
@@ -79,6 +80,8 @@ For each selected field:
 - If field 1 (Organization URL) or field 2 (Project Name) changed: flag for re-validation
 
 **Field 5 (Process Template):** Cannot be edited directly — it is auto-detected. If org URL or project changes, it will be re-detected.
+
+**Field 6 (Attach Story Files):** Toggle `true`/`false`. When enabled, story `.md` files are uploaded as attachments to their Azure DevOps work items during sync. Requires the user to be logged in via `az login` (or have `AZURE_DEVOPS_EXT_PAT` set).
 
 ### 4. Re-Validate Connection (If Needed)
 

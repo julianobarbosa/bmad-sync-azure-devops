@@ -268,7 +268,8 @@ def build_task_update_args(task: Dict[str, Any], devops_id: int, complete_state:
 def upload_attachment(org_url: str, project: str, pat: str, file_path: str, filename: str) -> Optional[str]:
     """Upload a file attachment to Azure DevOps via REST API.
 
-    Uses urllib.request (stdlib) with PAT authentication.
+    Uses urllib.request (stdlib) with PAT or Bearer token authentication.
+    Bearer tokens (from az CLI) start with 'eyJ'; PATs use Basic auth.
     Returns the attachment URL on success, None on failure.
     """
     org_url = org_url.rstrip("/")
@@ -283,9 +284,12 @@ def upload_attachment(org_url: str, project: str, pat: str, file_path: str, file
         progress(f"  WARNING: Could not read file for attachment: {e}")
         return None
 
-    token = base64.b64encode(f":{pat}".encode("utf-8")).decode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Authorization", f"Basic {token}")
+    if pat.startswith("eyJ"):
+        req.add_header("Authorization", f"Bearer {pat}")
+    else:
+        token = base64.b64encode(f":{pat}".encode("utf-8")).decode("utf-8")
+        req.add_header("Authorization", f"Basic {token}")
     req.add_header("Content-Type", "application/octet-stream")
 
     try:
@@ -300,19 +304,55 @@ def upload_attachment(org_url: str, project: str, pat: str, file_path: str, file
         return None
 
 
-def attach_file_to_work_item(az_path: str, devops_id: int, attachment_url: str) -> Optional[str]:
-    """Add an AttachedFile relation to a work item using az CLI.
+def attach_file_to_work_item(org_url: str, project: str, pat: str,
+                             devops_id: int, attachment_url: str) -> Optional[str]:
+    """Add an AttachedFile relation to a work item via REST API.
 
+    Uses JSON Patch to add the relation. The az CLI does not support
+    AttachedFile relations, so this must go through the REST API.
     Returns error string on failure, None on success.
     """
-    args = [
-        "boards", "work-item", "relation", "add",
-        "--id", str(devops_id),
-        "--relation-type", "AttachedFile",
-        "--target-url", attachment_url,
-    ]
-    _, err = run_az(az_path, args)
-    return err
+    org_url = org_url.rstrip("/")
+    url = f"{org_url}/{urllib.request.quote(project, safe='')}/_apis/wit/workitems/{devops_id}?api-version=7.0"
+
+    body = json.dumps([{
+        "op": "add",
+        "path": "/relations/-",
+        "value": {
+            "rel": "AttachedFile",
+            "url": attachment_url,
+            "attributes": {"comment": "Story specification file"}
+        }
+    }]).encode("utf-8")
+
+    req = urllib.request.Request(url, data=body, method="PATCH")
+    if pat.startswith("eyJ"):
+        req.add_header("Authorization", f"Bearer {pat}")
+    else:
+        token = base64.b64encode(f":{pat}".encode("utf-8")).decode("utf-8")
+        req.add_header("Authorization", f"Basic {token}")
+    req.add_header("Content-Type", "application/json-patch+json")
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return None
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        return str(e)
+    except Exception as e:
+        return str(e)
+
+
+def get_az_access_token(az_path: str) -> str:
+    """Fetch an Azure DevOps access token via az CLI.
+
+    Falls back to empty string on any failure so callers can skip attachment.
+    Uses the Azure DevOps resource ID (499b84ac-1321-427f-aa17-267ca6975798).
+    """
+    args = ["account", "get-access-token", "--resource", "499b84ac-1321-427f-aa17-267ca6975798"]
+    data, err = run_az(az_path, args)
+    if err or not data:
+        return ""
+    return data.get("accessToken", "")
 
 
 def progress(msg: str) -> None:
@@ -431,20 +471,28 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
     story_file_paths = story_file_paths or {}
     project = config.get("projectName", "")
 
+    attached_ids = set()
+
     def _attach_story_file(story_id, devops_id):
-        """Attach story .md file to a work item if org/PAT/path available."""
+        """Attach story .md file to a work item if org/PAT/path available.
+
+        Returns True on success, False otherwise.
+        """
         file_path = story_file_paths.get(story_id)
         if not file_path or not org_url or not pat:
-            return
+            return False
         filename = os.path.basename(file_path)
         progress(f"  Uploading attachment: {filename}")
         att_url = upload_attachment(org_url, project, pat, file_path, filename)
         if att_url:
-            att_err = attach_file_to_work_item(az_path, devops_id, att_url)
+            att_err = attach_file_to_work_item(org_url, project, pat, devops_id, att_url)
             if att_err:
                 progress(f"  WARNING: Attach relation failed: {att_err}")
+                return False
             else:
                 progress(f"  Attached {filename} to Story #{devops_id}")
+                return True
+        return False
 
     for story in stories:
         cls = story.get("classification", "")
@@ -453,6 +501,13 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
         if cls == "UNCHANGED" or cls == "ORPHANED":
             if story.get("devopsId"):
                 id_map[story_id] = story["devopsId"]
+            # Backfill attachment for previously-synced stories that lack one
+            if cls == "UNCHANGED" and story.get("attached") != "true":
+                devops_id = story.get("devopsId")
+                if devops_id and _attach_story_file(story_id, devops_id):
+                    attached_ids.add(story_id)
+            elif cls == "UNCHANGED" and story.get("attached") == "true":
+                attached_ids.add(story_id)
             results["skipped"].append({"id": story_id, "classification": cls})
             continue
 
@@ -520,7 +575,8 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
                     progress(f"  Set state to '{devops_state}'")
 
             # Attach story .md file
-            _attach_story_file(story_id, devops_id)
+            if _attach_story_file(story_id, devops_id):
+                attached_ids.add(story_id)
 
             results["created"].append({
                 "id": story_id, "devopsId": devops_id,
@@ -561,13 +617,15 @@ def sync_stories(az_path: str, config: Dict[str, str], stories: List[Dict[str, A
                 results["failed"].append({"id": story_id, "devopsId": devops_id, "error": err})
             else:
                 # Attach updated story .md file
-                _attach_story_file(story_id, devops_id)
+                if _attach_story_file(story_id, devops_id):
+                    attached_ids.add(story_id)
                 results["updated"].append({
                     "id": story_id, "devopsId": devops_id,
                     "contentHash": story.get("contentHash", "")
                 })
                 progress(f"  Updated Story #{devops_id}")
 
+    results["attachedIds"] = sorted(attached_ids)
     return results, id_map
 
 
@@ -800,8 +858,21 @@ def main():
     progress("\n=== Syncing Stories ===")
     story_statuses = diff.get("storyStatuses", {})
     story_file_paths = diff.get("storyFilePaths", {})
-    org_url = args.org or config.get("orgUrl", "")
-    pat = os.environ.get("AZURE_DEVOPS_EXT_PAT", "")
+    attach_enabled = config.get("attachStoryFiles", "false").lower() == "true"
+    org_url = ""
+    pat = ""
+    if attach_enabled:
+        org_url = args.org or config.get("organizationUrl", "") or config.get("orgUrl", "")
+        pat = os.environ.get("AZURE_DEVOPS_EXT_PAT", "")
+        if org_url and not pat:
+            progress("No AZURE_DEVOPS_EXT_PAT set — fetching token from az CLI...")
+            pat = get_az_access_token(az_path)
+            if pat:
+                progress("Token acquired from az CLI session")
+            else:
+                progress("WARNING: Could not acquire token — story file attachments will be skipped")
+    else:
+        progress("Story file attachments disabled (attachStoryFiles != true)")
     story_results, story_id_map = sync_stories(
         az_path, config, diff.get("stories", []), epic_id_map,
         story_statuses=story_statuses,
@@ -835,6 +906,7 @@ def main():
             "storiesCreated": len(story_results["created"]),
             "storiesUpdated": len(story_results["updated"]),
             "storiesFailed": len(story_results["failed"]),
+            "storiesAttached": len(story_results.get("attachedIds", [])),
             "tasksCreated": len(task_results["created"]),
             "tasksUpdated": len(task_results["updated"]),
             "tasksFailed": len(task_results["failed"]),
@@ -856,7 +928,7 @@ def main():
     s = result["summary"]
     progress(f"\n=== SYNC COMPLETE ===")
     progress(f"Epics:      {s['epicsCreated']} created, {s['epicsUpdated']} updated, {s['epicsFailed']} failed")
-    progress(f"Stories:    {s['storiesCreated']} created, {s['storiesUpdated']} updated, {s['storiesFailed']} failed")
+    progress(f"Stories:    {s['storiesCreated']} created, {s['storiesUpdated']} updated, {s['storiesFailed']} failed, {s['storiesAttached']} attached")
     progress(f"Tasks:      {s['tasksCreated']} created, {s['tasksUpdated']} updated, {s['tasksFailed']} failed")
     progress(f"Iterations: {s['iterationsCreated']} created, {s['iterationsFailed']} failed, {s['iterationMovements']} items moved")
 

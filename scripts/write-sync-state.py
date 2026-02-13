@@ -166,6 +166,12 @@ def write_sync_state(
     lines.append("")
 
     # --- Stories ---
+    # Build set of story IDs that have attachments (from sync results + diff state)
+    story_attached_ids = set(sync_results.get("stories", {}).get("attachedIds", []))
+    for story in diff_results.get("stories", []):
+        if story.get("attached") == "true":
+            story_attached_ids.add(story.get("id", ""))
+
     lines.append("stories:")
     stories = sorted(diff_results.get("stories", []),
                      key=lambda s: sort_key_numeric(s.get("id", "")))
@@ -195,6 +201,8 @@ def write_sync_state(
             lines.append(f'    contentHash: "{story.get("contentHash", "")}"')
             lines.append(f'    lastSynced: "{timestamp}"')
             lines.append(f'    status: "synced"')
+            if sid in story_attached_ids:
+                lines.append(f"    attached: true")
         counts["stories"] += 1
 
     lines.append("")

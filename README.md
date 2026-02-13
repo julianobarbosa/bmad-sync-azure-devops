@@ -157,7 +157,7 @@ Tasks and stories are enriched with additional Azure DevOps fields extracted dur
 | `(AC: 1, 3)` pattern | Description (AC references) | Regular tasks |
 | Story `.md` file | Attached file (via REST API) | Stories |
 
-**Story file attachments** require the `--org` argument (or `orgUrl` in config) and the `AZURE_DEVOPS_EXT_PAT` environment variable. The story markdown file is uploaded via the Azure DevOps REST API and linked as an AttachedFile relation to the Story work item.
+**Story file attachments** require `attachStoryFiles: "true"` in your config. Authentication uses `AZURE_DEVOPS_EXT_PAT` (Basic auth) or falls back to `az account get-access-token` (Bearer auth) if the PAT is not set. The story markdown file is uploaded via the Azure DevOps REST API and linked as an AttachedFile relation. Previously-synced stories missing attachments are automatically backfilled on the next sync run.
 
 ### Story Status Sync
 
@@ -196,7 +196,10 @@ projectName: "MyProject"
 areaPath: "MyProject\\Backend"
 iterationRootPath: "MyProject\\Iterations"
 processTemplate: "Scrum"
+attachStoryFiles: "false"
 ```
+
+- **`attachStoryFiles`**: When `"true"`, story `.md` files are uploaded and attached to their Azure DevOps work items during sync. Default is `"false"` (opt-in). Toggle via Edit mode.
 
 ### devops-sync.yaml
 
@@ -217,6 +220,7 @@ stories:
     contentHash: "d4e5f6g7h8i9"
     lastSynced: "2026-03-01T14:30:00Z"
     status: "synced"
+    attached: true
 tasks:
   "1.1-T1":
     devopsId: 12347
@@ -271,7 +275,7 @@ Re-running Create mode only pushes items whose hash changed since last sync.
 |------------|--------|
 | **New** (not in sync file) | Create in Azure DevOps |
 | **Changed** (hash differs) | Update in Azure DevOps |
-| **Unchanged** (hash matches) | Skip |
+| **Unchanged** (hash matches) | Skip (but backfill attachment if `attached` flag missing and `attachStoryFiles` enabled) |
 | **Orphaned** (in DevOps, not in BMAD) | Warn only — never auto-deleted |
 | **Failed** (API error) | Mark as "pending" for retry on next sync |
 
@@ -317,6 +321,9 @@ The process template may have been misdetected. Run Edit mode to re-validate con
 
 **Script says "AZURE_DEVOPS_EXT_PAT not set" but it is set**
 Ensure the variable is set in the same shell session where the AI agent invokes the scripts. Some IDE terminals don't inherit environment variables from other shells. On Windows PowerShell: `$env:AZURE_DEVOPS_EXT_PAT = "your-token"`. On Linux/Mac: `export AZURE_DEVOPS_EXT_PAT=your-token`.
+
+**Story attachments not appearing**
+Ensure `attachStoryFiles: "true"` is set in `devops-sync-config.yaml`. The feature defaults to `false`. Authentication requires either `AZURE_DEVOPS_EXT_PAT` or an active `az login` session (the script falls back to `az account get-access-token`). If your PAT lacks sufficient scope, the upload will fail silently — check the sync stderr output for `WARNING: Attachment upload failed` messages. Previously-synced stories without attachments are automatically backfilled on the next run.
 
 **`az.cmd` not found on Windows**
 The sync script auto-detects `az.cmd` via `shutil.which`. If detection fails, ensure `az` is on your `PATH`. Run `where az` in CMD or `Get-Command az` in PowerShell to verify.

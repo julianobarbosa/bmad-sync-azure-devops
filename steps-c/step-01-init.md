@@ -163,7 +163,10 @@ projectName: "{value}"
 areaPath: "{value}"
 iterationRootPath: "{value}"
 processTemplate: "{detected-value}"
+attachStoryFiles: "false"
 ```
+
+Note: `attachStoryFiles` controls whether story `.md` files are uploaded as attachments to Azure DevOps work items. Default is `false`. Can be enabled later via Edit mode.
 
 Report: "Config saved to {configFile}"
 

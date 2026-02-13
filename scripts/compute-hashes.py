@@ -172,6 +172,7 @@ def classify_items(parsed_items: List[Dict], stored_items: Dict, hash_fn: Callab
         stored = stored_items.get(item_id, {})
         old_hash = stored.get("contentHash", "")
         devops_id = stored.get("devopsId", None)
+        attached = stored.get("attached", "")
 
         if not old_hash:
             classification = "NEW"
@@ -180,12 +181,15 @@ def classify_items(parsed_items: List[Dict], stored_items: Dict, hash_fn: Callab
         else:
             classification = "CHANGED"
 
-        results.append({
+        result_item = {
             **item,
             "contentHash": new_hash,
             "classification": classification,
             "devopsId": devops_id
-        })
+        }
+        if attached:
+            result_item["attached"] = attached
+        results.append(result_item)
 
     # Find orphaned items (in stored but not in parsed)
     for item_id, stored in stored_items.items():
@@ -331,8 +335,11 @@ def main():
     story_file_paths = parsed.get("storyFilePaths", {})
     attachment_calls = 0
     for s in story_results:
-        if s["classification"] in ("NEW", "CHANGED") and story_file_paths.get(s.get("id", "")):
+        has_file = story_file_paths.get(s.get("id", ""))
+        if s["classification"] in ("NEW", "CHANGED") and has_file:
             attachment_calls += 2  # REST upload + az relation add
+        elif s["classification"] == "UNCHANGED" and s.get("attached") != "true" and has_file:
+            attachment_calls += 2  # backfill attachment for previously-synced story
 
     cli_calls = (
         epic_counts["NEW"] + epic_counts["CHANGED"]  # epic create/update
