@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-02-18
+
+### Added
+- Epic state sync — epics now set Azure DevOps work item state based on `sprint-status.yaml` development status (`backlog`, `in-progress`, `done`)
+- `backlog` status mapping in `map_bmad_status_to_devops_state()` (maps to New/New/Proposed/To Do, same as `draft`)
+- Tests for `backlog` status mapping
+
+### Fixed
+- Epics marked `done` or `in-progress` in `sprint-status.yaml` were not updating their Azure DevOps work item state (only title and description were synced)
+
 ## [0.4.1] - 2026-02-11
 
 ### Fixed
@@ -73,7 +83,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Validate mode for drift auditing and bug discovery
 - Sprint/iteration creation and story assignment
 
-[Unreleased]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.4.1...v0.4.2
 [0.4.0]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cfpeterkozak/bmad-sync-azure-devops/compare/v0.1.0...v0.2.0

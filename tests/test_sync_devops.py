@@ -71,6 +71,12 @@ class TestMapBmadStatus:
     def test_none_status_returns_none(self):
         assert sync_devops.map_bmad_status_to_devops_state(None, "Agile") is None
 
+    def test_backlog_scrum(self):
+        assert sync_devops.map_bmad_status_to_devops_state("backlog", "Scrum") == "New"
+
+    def test_backlog_agile(self):
+        assert sync_devops.map_bmad_status_to_devops_state("backlog", "Agile") == "New"
+
     def test_unknown_status_returns_none(self):
         assert sync_devops.map_bmad_status_to_devops_state("blocked", "Agile") is None
 

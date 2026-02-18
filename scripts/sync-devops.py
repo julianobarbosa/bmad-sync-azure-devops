@@ -110,11 +110,15 @@ def get_complete_state(template: str) -> str:
 
 
 def map_bmad_status_to_devops_state(status: Optional[str], template: str) -> Optional[str]:
-    """Map BMAD story status to Azure DevOps work item state.
+    """Map BMAD status to Azure DevOps work item state.
+
+    Works for both story statuses (draft, in-progress, review, done) and
+    epic statuses (backlog, in-progress, done).
 
     | BMAD Status  | Agile  | Scrum     | CMMI     | Basic |
     |--------------|--------|-----------|----------|-------|
     | draft        | New    | New       | Proposed | To Do |
+    | backlog      | New    | New       | Proposed | To Do |
     | in-progress  | Active | Committed | Active   | Doing |
     | review       | Active | Committed | Active   | Doing |
     | done         | Closed | Done      | Resolved | Done  |
@@ -127,6 +131,7 @@ def map_bmad_status_to_devops_state(status: Optional[str], template: str) -> Opt
 
     mapping = {
         "draft": {"Agile": "New", "Scrum": "New", "CMMI": "Proposed", "Basic": "To Do"},
+        "backlog": {"Agile": "New", "Scrum": "New", "CMMI": "Proposed", "Basic": "To Do"},
         "in-progress": {"Agile": "Active", "Scrum": "Committed", "CMMI": "Active", "Basic": "Doing"},
         "review": {"Agile": "Active", "Scrum": "Committed", "CMMI": "Active", "Basic": "Doing"},
         "done": {"Agile": "Closed", "Scrum": "Done", "CMMI": "Resolved", "Basic": "Done"},
@@ -378,13 +383,15 @@ def get_default_iteration(config: Dict[str, str]) -> str:
     return iteration_root
 
 
-def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, int]]:
-    """Create/update epics. Returns dict mapping epic ID -> devops ID."""
+def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]], epic_statuses: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Create/update epics with state sync. Returns dict mapping epic ID -> devops ID."""
     results = {"created": [], "updated": [], "failed": [], "skipped": []}
     id_map = {}
 
     area = config.get("areaPath", "")
     iteration = get_default_iteration(config)
+    template = config.get("processTemplate", "Agile")
+    epic_statuses = epic_statuses or {}
 
     for epic in epics:
         cls = epic.get("classification", "")
@@ -419,6 +426,23 @@ def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]
             devops_id = data.get("id")
             if devops_id:
                 id_map[epic_id] = devops_id
+
+                # Update state if epic has a non-default BMAD status
+                devops_state = map_bmad_status_to_devops_state(
+                    epic_statuses.get(epic_id), template
+                )
+                if devops_state and devops_state != "New":
+                    state_args = [
+                        "boards", "work-item", "update",
+                        "--id", str(devops_id),
+                        "--state", devops_state,
+                    ]
+                    _, state_err = run_az(az_path, state_args)
+                    if state_err:
+                        progress(f"  WARNING: State update to '{devops_state}' failed: {state_err}")
+                    else:
+                        progress(f"  Set state to '{devops_state}'")
+
                 results["created"].append({
                     "id": epic_id, "devopsId": devops_id,
                     "contentHash": epic.get("contentHash", "")
@@ -440,6 +464,13 @@ def sync_epics(az_path: str, config: Dict[str, str], epics: List[Dict[str, Any]]
                 "--title", truncate_title(epic.get("title", "")),
                 "--description", wrap_html(epic.get("description", ""), max_len=3000),
             ]
+
+            # Include state in update if epic has a BMAD status
+            devops_state = map_bmad_status_to_devops_state(
+                epic_statuses.get(epic_id), template
+            )
+            if devops_state:
+                args += ["--state", devops_state]
 
             progress(f"Updating Epic {epic_id} (#{devops_id}): {epic.get('title', '')}")
             data, err = run_az(az_path, args)
@@ -775,7 +806,11 @@ def sync_epic_iterations(az_path: str, config: Dict[str, str], iterations: List[
                 # \ProjectName\Iteration\ParentIterationPath
                 # The literal "Iteration" segment is mandatory per Azure DevOps CLI.
                 if iter_root_raw:
-                    create_path = f"\\{project}\\Iteration\\{iter_root_raw}"
+                    # Strip project prefix if iterationRootPath already starts with it
+                    iter_suffix = iter_root_raw
+                    if iter_suffix.startswith(project + "\\"):
+                        iter_suffix = iter_suffix[len(project) + 1:]
+                    create_path = f"\\{project}\\Iteration\\{iter_suffix}"
                 else:
                     create_path = f"\\{project}\\Iteration"
                 args += ["--path", create_path]
@@ -853,7 +888,8 @@ def main():
 
     # Sync in dependency order
     progress("\n=== Syncing Epics ===")
-    epic_results, epic_id_map = sync_epics(az_path, config, diff.get("epics", []))
+    epic_statuses = diff.get("epicStatuses", {})
+    epic_results, epic_id_map = sync_epics(az_path, config, diff.get("epics", []), epic_statuses=epic_statuses)
 
     progress("\n=== Syncing Stories ===")
     story_statuses = diff.get("storyStatuses", {})

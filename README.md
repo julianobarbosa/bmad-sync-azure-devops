@@ -26,7 +26,7 @@ story files ┘
 2. **Hash** each item's content using normalized SHA-256 for reliable change detection
 3. **Diff** against the last sync state — classify items as new/changed/unchanged/orphaned
 4. **Dry-run** shows exactly what will happen — you confirm before any API calls
-5. **Sync** creates/updates work items via `az boards` CLI in dependency order (Epics → Stories → Tasks → Iterations), including story state mapping
+5. **Sync** creates/updates work items via `az boards` CLI in dependency order (Epics → Stories → Tasks → Iterations), including epic and story state mapping
 6. **Map** saves all Azure DevOps work item IDs and hashes to `devops-sync.yaml` for future incremental runs
 
 ## Prerequisites
@@ -124,7 +124,7 @@ Displays current connection settings, allows field changes, re-validates connect
 | Story file Tasks (`- [ ] task`) | Task (parented to Story) | Create mode (after story files exist) |
 | Story file Review Follow-ups (`### Review Follow-ups (AI)`) | Task (parented to Story) | Create mode |
 | Story file `Status:` field | Work item State | Create mode (mapped per template) |
-| `sprint-status.yaml` epic statuses | Epic Iterations (sub-iterations named by epic slug) | Create mode (when epic is `in-progress` or `done`) |
+| `sprint-status.yaml` epic statuses | Epic work item State + Iterations (sub-iterations named by epic slug) | Create mode (state always synced; iteration created when `in-progress` or `done`) |
 
 > **Note:** Epic/Story heading levels vary between projects. The parse script auto-detects the correct levels by scanning for the first `Epic N:` pattern at any heading depth.
 
@@ -159,17 +159,21 @@ Tasks and stories are enriched with additional Azure DevOps fields extracted dur
 
 **Story file attachments** require `attachStoryFiles: "true"` in your config. Authentication uses `AZURE_DEVOPS_EXT_PAT` (Basic auth) or falls back to `az account get-access-token` (Bearer auth) if the PAT is not set. The story markdown file is uploaded via the Azure DevOps REST API and linked as an AttachedFile relation. Previously-synced stories missing attachments are automatically backfilled on the next sync run.
 
-### Story Status Sync
+### Status Sync (Stories and Epics)
 
-The `Status:` field in story files maps to Azure DevOps work item state:
+Both story and epic statuses are synced to Azure DevOps work item state:
 
-| BMAD Status | Agile | Scrum | CMMI | Basic |
-|-------------|-------|-------|------|-------|
-| `draft` | New | New | Proposed | To Do |
-| `in-progress` | Active | Committed | Active | Doing |
-| `review` | Active | Committed | Active | Doing |
-| `done` | Closed | Done | Resolved | Done |
-| *(not set)* | *(no change)* | *(no change)* | *(no change)* | *(no change)* |
+| BMAD Status | Agile | Scrum | CMMI | Basic | Used By |
+|-------------|-------|-------|------|-------|---------|
+| `draft` | New | New | Proposed | To Do | Stories |
+| `backlog` | New | New | Proposed | To Do | Epics |
+| `in-progress` | Active | Committed | Active | Doing | Both |
+| `review` | Active | Committed | Active | Doing | Stories |
+| `done` | Closed | Done | Resolved | Done | Both |
+| *(not set)* | *(no change)* | *(no change)* | *(no change)* | *(no change)* | |
+
+- **Story status** comes from the `Status:` field in individual story files
+- **Epic status** comes from the `development_status:` block in `sprint-status.yaml`
 
 > **Note:** `review` maps identically to `in-progress` since standard Azure DevOps templates lack a Review state.
 
@@ -380,7 +384,7 @@ Each step file references its script via frontmatter (e.g., `parseScript: '../sc
 1. **Bug lifecycle gap**: `devops-bugs.yaml` tracks `bmadStatus` (new/triaged/fixed) but no BMAD workflow currently updates this status. Triage is manual.
 2. **No auto-delete**: Orphaned items in Azure DevOps are never deleted automatically. Remove manually if needed.
 3. **One-way content sync**: Content flows BMAD → Azure DevOps. Edits made directly in Azure DevOps are not synced back to BMAD files.
-4. **State sync is one-way**: Story status and task checkbox state sync from BMAD → DevOps, but DevOps state changes don't flow back to BMAD files.
+4. **State sync is one-way**: Epic, story, and task state sync from BMAD → DevOps, but DevOps state changes don't flow back to BMAD files.
 
 ## License
 

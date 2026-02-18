@@ -93,12 +93,26 @@ def build_subtask_html(subtasks: List[Dict[str, Any]]) -> str:
 
 
 def detect_heading_levels(content: str) -> Tuple[int, int]:
-    """Scan for 'Epic N:' pattern at any heading level and derive story level."""
+    """Scan for 'Story N.M:' and 'Epic N:' patterns to detect heading levels.
+
+    When Story headings exist, their level is authoritative and epic_level = story_level - 1.
+    This handles epics.md files that have both a summary section (### Epic) and a detailed
+    section (## Epic / ### Story) — the story heading level disambiguates.
+    """
+    # First, try to detect story level directly — unambiguous when present
+    for line in content.splitlines():
+        m = re.match(r'^(#{1,6})\s+Story\s+\d+\.\d+:', line)
+        if m:
+            story_level = len(m.group(1))
+            return story_level - 1, story_level
+
+    # No stories found; detect from first epic heading
     for line in content.splitlines():
         m = re.match(r'^(#{1,6})\s+Epic\s+\d+:', line)
         if m:
             epic_level = len(m.group(1))
             return epic_level, epic_level + 1
+
     # Defaults: ## Epic, ### Story
     return 2, 3
 
